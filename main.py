@@ -359,7 +359,7 @@ def sell_crypto():
     # try:
     total_cost = quantity * current_price
     st.write(f"**Total Cost:** ₹{total_cost}")
-    
+       
     if quantity > c_quantity[c_name.index(crypto_choice)]:
         st.warning("You don't own enough of this cryptocurrency to sell.")
         return
