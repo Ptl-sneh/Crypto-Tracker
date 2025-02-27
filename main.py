@@ -11,6 +11,30 @@ import pandas as pd
 # register
 # login
 
+# Cache API responses to reduce API calls
+@st.cache_data(ttl=60)
+def get_cached_crypto_data():
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {"vs_currency": "inr", "order": "market_cap_desc", "per_page": "100", "page": "1", "sparkline": "false"}
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException:
+        st.warning("⚠️ API Error: Using last cached data.")
+        return []
+
+@st.cache_data(ttl=300)
+def get_cached_historical_data(crypto_id):
+    url = f"https://api.coingecko.com/api/v3/coins/{crypto_id}/market_chart"
+    params = {"vs_currency": "inr", "days": "30", "interval": "daily"}
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException:
+        return None
+
 class User:
     def __init__(self, username, pwd, email="", phone=""):
         self.un = username
@@ -47,40 +71,18 @@ class User:
 
 
 class CryptoManager:
-        
     def get_crypto_data(self):
-        url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {"vs_currency": "inr", "order": "market_cap_desc", "per_page": "100", "page": "1", "sparkline": "false"}
-        response = requests.get(url,params=params)
-        
-        if response.status_code == 429:
-            st.warning("Out of requests! Please try again later.")
-            return []  # Return an empty list to prevent errors
-
-        if response.status_code != 200:
-            st.warning(f"API Error: {response.status_code}. Please try again later.")
-            return []
-        
-        data = response.json()
-        return data
+        return get_cached_crypto_data()
     
     def get_historical_data(self, crypto_id):
-        url = f"https://api.coingecko.com/api/v3/coins/{crypto_id}/market_chart"
-        params = {"vs_currency": "inr", "days": "30", "interval": "daily"}
-        response = requests.get(url, params=params)
-            
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return None
+        return get_cached_historical_data(crypto_id)
 
 if "page" not in st.session_state:
     st.session_state.page = "Login"
 
-
 def switch_page(page):
     st.session_state.page = page
-    st.rerun()  
+    st.rerun()
 
 
 # Signup Page
@@ -212,9 +214,8 @@ def view_crypto():
 
 
 def buy_crypto():
-    st.title("Buy Crypto")
+    st.title("Buy Cryptocurrency")
 
-    # Get username from session state
     if "username" not in st.session_state:
         st.error("Please login first!")
         if st.button("Go to Login"):
@@ -223,7 +224,7 @@ def buy_crypto():
         return
 
     username = st.session_state.username
-    user = User(username, "")  # Password not needed for balance check
+    user = User(username, "")
     balance = user.checkBalance()
 
     if balance == 0:
@@ -231,62 +232,81 @@ def buy_crypto():
         if st.button("Add Balance"):
             switch_page("add_balance")
 
-    st.write(f"Current Balance: ₹{balance}")
+    st.write(f"💰 **Your Balance:** ₹{balance}")
     manager = CryptoManager()
     data = manager.get_crypto_data()
 
-    # Get crypto names for selection
-    crypto_names = [coin["name"] for coin in data]
-    crypto_choice = st.selectbox("Select Cryptocurrency to Buy:", crypto_names)
-
-
-
-    for coin in data:
-        if coin["name"] == crypto_choice:
-            current_price = coin["current_price"]
-            st.write(f"Current Price of {crypto_choice}: ₹{current_price}")
-            st.write(f"Market Cap of {crypto_choice}: ₹{coin['market_cap']}")
-            st.write(f"24H High of {crypto_choice}: ₹{coin['high_24h']}")
-            st.write(f"24H Low of {crypto_choice}: ₹{coin['low_24h']}")
-            st.write(f"All time high of {crypto_choice}: ₹{coin['ath']}")
-            st.write(f"All time low of {crypto_choice}: ₹{coin['atl']}")
-        break
-
-
-    # Get user input for quantity
-    quantity = st.number_input("Enter quantity to buy:", min_value=0, step=1)
-
-    # Validate quantity input
-    if quantity <= 0:
-        st.warning("Please enter a valid quantity greater than zero!")
+    if not data:
+        st.warning("⚠️ No cryptocurrency data available. Try again later.")
         return
-    
-    
-    try:
-        total_cost = quantity * current_price
+
+    crypto_names = [coin["name"] for coin in data]
+    selected_crypto = st.selectbox("Select Cryptocurrency to Buy:", crypto_names, key="crypto_choice")
+
+    if st.button("Refresh Prices 🔄"):
+        st.rerun()
+
+    selected_coin = next((coin for coin in data if coin["name"] == selected_crypto), None)
+
+    if selected_coin:
+        st.write(f"**Name:** {selected_coin['name']}")
+        st.write(f"**Symbol:** {selected_coin['symbol'].upper()}")
+        st.write(f"**Current Price (INR):** ₹{selected_coin['current_price']}")
+        st.write(f"**Market Cap:** ₹{selected_coin['market_cap']}")
+        st.write(f"**24H High:** ₹{selected_coin['high_24h']}")
+        st.write(f"**24H Low:** ₹{selected_coin['low_24h']}")
+        st.write(f"**All-time High:** ₹{selected_coin['ath']}")
+        st.write(f"**All-time Low:** ₹{selected_coin['atl']}")
+
+        def plot_price_trend(crypto_id):
+            historical_data = manager.get_historical_data(crypto_id)
+
+            if historical_data:
+                prices = historical_data["prices"]
+                dates = [datetime.datetime.fromtimestamp(price[0] / 1000).date() for price in prices]
+                values = [price[1] for price in prices]
+
+                plt.figure(figsize=(10, 5))
+                plt.plot(dates, values, marker='o', linestyle='-', color='b', label="Price Trend")
+                plt.xlabel("Date")
+                plt.ylabel("Price (INR)")
+                plt.title(f"{selected_coin['name']} Price Trend (Last 7 Days)")
+                plt.xticks(rotation=45)
+                plt.legend()
+                plt.grid()
+                st.pyplot(plt)
+            else:
+                st.warning("No historical data available.")
+
+        plot_price_trend(selected_coin["id"])
+
+        quantity = st.number_input("Enter quantity to buy:", min_value=1, step=1)
+        total_cost = quantity * selected_coin["current_price"]
         st.write(f"**Total Cost:** ₹{total_cost}")
-        
-    
+
         if total_cost > balance:
             st.warning("Insufficient balance! Please add more funds.")
-            if st.button("Add Balance", key="add_funds_button"):
+            if st.button("Add Balance"):
                 switch_page("add_balance")
 
-
-        if st.button("Confirm Purchase"):
-
-            # Database transaction
+        if st.button("Confirm Purchase ✅"):
+            try:
                 cursor.execute("UPDATE user SET balance = balance - %s WHERE username = %s", (total_cost, username))
-                cursor.execute("INSERT INTO buycrypto (username, quantity, buyingprice, amountpaid, cryptoname) VALUES (%s, %s, %s, %s, %s)", (username, quantity, current_price, total_cost, crypto_choice))
+                cursor.execute("INSERT INTO buycrypto (username, quantity, buyingprice, amountpaid, cryptoname) VALUES (%s, %s, %s, %s, %s)",
+                               (username, quantity, selected_coin["current_price"], total_cost, selected_crypto))
                 conn.commit()
-                st.success(f"Successfully purchased {quantity} {crypto_choice} for ₹{total_cost}!")
+                st.success(f"✅ Successfully purchased {quantity} {selected_crypto} for ₹{total_cost}!")
                 st.rerun()
-    except Exception as e:
-        st.warning("Network Error! Try again later.")
-        
-    
+            except Exception as e:
+                st.warning("⚠️ Network Error! Try again later.")
+
+        if st.button("Cancel Purchase ❌"):
+            switch_page("Dashboard")
+
     if st.button("Back"):
         switch_page("Dashboard")
+
+
 
 
         
@@ -335,49 +355,53 @@ def sell_crypto():
     
     cursor.execute("SELECT cryptoname, quantity, buyingprice FROM buycrypto WHERE username = %s", (username,))
     c_n = cursor.fetchall()
+    if c_n == []:
+        st.write("You dont have the any crypto currency")
+        if st.button("Back"):
+            switch_page("Dashboard")
+    else:
+        c_name = [c[0] for c in c_n]
+        c_quantity = [c[1] for c in c_n]
+        c_buyingprice = [c[2] for c in c_n]
     
-    c_name = [c[0] for c in c_n]
-    c_quantity = [c[1] for c in c_n]
-    c_buyingprice = [c[2] for c in c_n]
-    
-    crypto_choice = st.selectbox("Select Cryptocurrency to Sell:", c_name)
-    
-    for coin in data:
-        if coin["name"] == crypto_choice:
-            current_price = coin["current_price"]
-            st.write(f"Current Price of {crypto_choice}: ₹{current_price}")
-            
-    
-    st.write(f"You own {c_quantity[c_name.index(crypto_choice)]} {crypto_choice} at a buying price of ₹{c_buyingprice[c_name.index(crypto_choice)]}.")  
-    
-    quantity = st.number_input("Enter quantity to sell:", min_value=1, step=1)
-    
-    if quantity <= 0:
-        st.warning("Please enter a valid quantity greater than zero!")
-        return
-    
-    # try:
-    total_cost = quantity * current_price
-    st.write(f"**Total Cost:** ₹{total_cost}")
-       
-    if quantity > c_quantity[c_name.index(crypto_choice)]:
-        st.warning("You don't own enough of this cryptocurrency to sell.")
-        return
-    
-    
-    if st.button("Confirm Sale"):
-        # Database transaction
-            cursor.execute("UPDATE user SET balance = balance + %s WHERE username = %s", (total_cost, username))
-            cursor.execute("UPDATE buycrypto SET quantity = quantity - %s WHERE username = %s", (quantity, username))
-            cursor.execute("INSERT INTO sellcrypto (username, cryptoname,sellingprice, buyingprice, quantity, gain/loss) VALUES (%s, %s, %s, %s, %s, %s)", (username, crypto_choice, current_price, c_buyingprice[c_name.index(crypto_choice)], quantity, total_cost - (quantity * c_buyingprice[c_name.index(crypto_choice)])))
-            conn.commit()
-            st.success(f"Successfully sold {quantity} {crypto_choice} for ₹{total_cost}!")
-            st.rerun()
-    # except Exception as e:
-    #     st.warning("Network Error! Try again later.")
+        crypto_choice = st.selectbox("Select Cryptocurrency to Sell:", c_name)
         
-    if st.button("Back"):
-        switch_page("Dashboard")
+        for coin in data:
+            if coin["name"] == crypto_choice:
+                current_price = coin["current_price"]
+                st.write(f"Current Price of {crypto_choice}: ₹{current_price}")
+                
+        
+        st.write(f"You own {c_quantity[c_name.index(crypto_choice)]} {crypto_choice} at a buying price of ₹{c_buyingprice[c_name.index(crypto_choice)]}.")  
+        
+        quantity = st.number_input("Enter quantity to sell:", min_value=1, step=1)
+        
+        if quantity <= 0:
+            st.warning("Please enter a valid quantity greater than zero!")
+            return
+        
+        # try:
+        total_cost = quantity * current_price
+        st.write(f"**Total Cost:** ₹{total_cost}")
+        
+        if quantity > c_quantity[c_name.index(crypto_choice)]:
+            st.warning("You don't own enough of this cryptocurrency to sell.")
+            return
+        
+        
+        if st.button("Confirm Sale"):
+            # Database transaction
+                cursor.execute("UPDATE user SET balance = balance + %s WHERE username = %s", (total_cost, username))
+                cursor.execute("UPDATE buycrypto SET quantity = quantity - %s WHERE username = %s", (quantity, username))
+                cursor.execute("INSERT INTO sellcrypto (username, cryptoname,sellingprice, buyingprice, quantity, gain/loss) VALUES (%s, %s, %s, %s, %s, %s)", (username, crypto_choice, current_price, c_buyingprice[c_name.index(crypto_choice)], quantity, total_cost - (quantity * c_buyingprice[c_name.index(crypto_choice)])))
+                conn.commit()
+                st.success(f"Successfully sold {quantity} {crypto_choice} for ₹{total_cost}!")
+                st.rerun()
+        # except Exception as e:
+        #     st.warning("Network Error! Try again later.")
+            
+        if st.button("Back"):
+            switch_page("Dashboard")
 
 def view_portfolio():
     pass
