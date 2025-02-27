@@ -4,6 +4,7 @@ import requests
 import matplotlib.pyplot as plt
 import datetime
 import pandas as pd
+import decimal
 
 
 # USER CLASS 
@@ -148,6 +149,7 @@ def dashboard():
     st.button("Buy Crypto", on_click=lambda: switch_page("buy_crypto"))
     st.button("Sell Crypto", on_click=lambda: switch_page("sell_crypto"))
     st.button("View Portfolio", on_click=lambda: switch_page("view_portfolio"))
+    st.button("View Sell History", on_click=lambda: switch_page("sell_history"))
 
     if st.button("Logout"):
         switch_page("Login")
@@ -191,6 +193,8 @@ def see_Details(data,crypto,manager):
             break
     if not found:
         st.warning("Cryptocurrency not found!")
+        
+
 
 def view_crypto():
     manager = CryptoManager()
@@ -213,9 +217,11 @@ def view_crypto():
         switch_page("Dashboard")
 
 
+
 def buy_crypto():
     st.title("Buy Cryptocurrency")
 
+    # Ensure user is logged in
     if "username" not in st.session_state:
         st.error("Please login first!")
         if st.button("Go to Login"):
@@ -227,12 +233,13 @@ def buy_crypto():
     user = User(username, "")
     balance = user.checkBalance()
 
+
     if balance == 0:
         st.warning("Your balance is ₹0. Please add funds first!")
         if st.button("Add Balance"):
             switch_page("add_balance")
+        return
 
-    st.write(f"💰 **Your Balance:** ₹{balance}")
     manager = CryptoManager()
     data = manager.get_crypto_data()
 
@@ -241,6 +248,15 @@ def buy_crypto():
         return
 
     crypto_names = [coin["name"] for coin in data]
+
+    # Reset session state variables if not set
+    if "crypto_choice" not in st.session_state:
+        st.session_state["crypto_choice"] = crypto_names[0]
+
+    if "investment_amount" not in st.session_state:
+        st.session_state["investment_amount"] = 0.0
+
+    # Select cryptocurrency
     selected_crypto = st.selectbox("Select Cryptocurrency to Buy:", crypto_names, key="crypto_choice")
 
     if st.button("Refresh Prices 🔄"):
@@ -258,6 +274,7 @@ def buy_crypto():
         st.write(f"**All-time High:** ₹{selected_coin['ath']}")
         st.write(f"**All-time Low:** ₹{selected_coin['atl']}")
 
+        # Function to plot price trend
         def plot_price_trend(crypto_id):
             historical_data = manager.get_historical_data(crypto_id)
 
@@ -280,25 +297,43 @@ def buy_crypto():
 
         plot_price_trend(selected_coin["id"])
 
-        quantity = st.number_input("Enter quantity to buy:", min_value=1, step=1)
-        total_cost = quantity * selected_coin["current_price"]
-        st.write(f"**Total Cost:** ₹{total_cost}")
-
-        if total_cost > balance:
-            st.warning("Insufficient balance! Please add more funds.")
+        # User enters investment amount
+        amount_invested = st.number_input("Enter Rupees to Invest:", min_value=0.01, step=0.01, format="%.2f", key="investment_amount")
+        
+        if amount_invested > balance:
+            st.warning("❌ Insufficient balance! Please add more funds.")
             if st.button("Add Balance"):
                 switch_page("add_balance")
+            return
+
+        # Calculate how much crypto the user will receive
+        crypto_quantity = round(amount_invested / selected_coin["current_price"], 8)
+        st.write(f"**You will own {selected_coin['name']}:** {crypto_quantity} units")
+        st.write(f"💰 **Your Current Balance:** ₹{balance}")
 
         if st.button("Confirm Purchase ✅"):
             try:
-                cursor.execute("UPDATE user SET balance = balance - %s WHERE username = %s", (total_cost, username))
-                cursor.execute("INSERT INTO buycrypto (username, quantity, buyingprice, amountpaid, cryptoname) VALUES (%s, %s, %s, %s, %s)",
-                               (username, quantity, selected_coin["current_price"], total_cost, selected_crypto))
+                # Convert values to Decimal for precise calculations
+                amount_decimal = decimal.Decimal(str(amount_invested))
+                crypto_quantity_decimal = decimal.Decimal(str(crypto_quantity))
+                price_decimal = decimal.Decimal(str(round(selected_coin["current_price"], 8)))
+
+                # Update user balance
+                cursor.execute("UPDATE user SET balance = balance - %s WHERE username = %s", (amount_decimal, username))
+                
+                # Insert into buycrypto table
+                cursor.execute("""
+                    INSERT INTO buycrypto (username, cryptoname, quantity, buyingprice, amountpaid, buy_date)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                """, (username, selected_crypto, crypto_quantity_decimal, price_decimal, amount_decimal))
+                
                 conn.commit()
-                st.success(f"✅ Successfully purchased {quantity} {selected_crypto} for ₹{total_cost}!")
+                
+                st.success(f"✅ Successfully purchased {crypto_quantity} {selected_crypto} for ₹{amount_invested}!")
                 st.rerun()
+
             except Exception as e:
-                st.warning("⚠️ Network Error! Try again later.")
+                st.warning(f"⚠️ Network Error! Try again later.\nError: {e}")
 
         if st.button("Cancel Purchase ❌"):
             switch_page("Dashboard")
@@ -308,12 +343,10 @@ def buy_crypto():
 
 
 
-
         
 def add_balance():
     st.title("Add Balance")
-    
-    st.warning("Your balance is ₹0. Please add funds first!")
+
     
     username = st.session_state.username
     user = User(username, "")  # Password not needed for balance check
@@ -336,75 +369,180 @@ def add_balance():
     
     if st.button("Back"):
         switch_page("buy_crypto")
-    
-    
-    
+
+
+
 
 def sell_crypto():
     st.title("Sell Crypto")
-    
+
+    # Ensure user is logged in
+    if "username" not in st.session_state:
+        st.error("Please login first!")
+        if st.button("Go to Login"):
+            st.session_state["page"] = "Login"
+            st.rerun()
+        return
+
     username = st.session_state.username
-    user = User(username, "")  # Password not needed for balance check
-    
+    user = User(username, "")
+
+    # Fetch user balance
     balance = user.checkBalance()
-    
+    st.write(f"💰 **Your Current Balance:** ₹{balance}")
+
     manager = CryptoManager()
     data = manager.get_crypto_data()
-    
-    st.write("Select Cryptocurrency to Sell:")
-    
-    cursor.execute("SELECT cryptoname, quantity, buyingprice FROM buycrypto WHERE username = %s", (username,))
-    c_n = cursor.fetchall()
-    if c_n == []:
-        st.write("You dont have the any crypto currency")
+
+    # Fetch user's owned crypto
+    cursor.execute("SELECT id, cryptoname, quantity, buyingprice FROM buycrypto WHERE username = %s", (username,))
+    owned_crypto = cursor.fetchall()
+
+    if not owned_crypto:
+        st.warning("⚠️ You don't own any cryptocurrency.")
         if st.button("Back"):
             switch_page("Dashboard")
+        return
+
+    # Select cryptocurrency to sell
+    crypto_names = list(set([row[1] for row in owned_crypto]))  # Unique crypto names
+    selected_crypto = st.selectbox("Select Cryptocurrency to Sell:", crypto_names)
+
+    # Get current market price
+    for coin in data:
+        if coin["name"] == selected_crypto:
+            current_price = decimal.Decimal(str(coin["current_price"]))
+            break
     else:
-        c_name = [c[0] for c in c_n]
-        c_quantity = [c[1] for c in c_n]
-        c_buyingprice = [c[2] for c in c_n]
-    
-        crypto_choice = st.selectbox("Select Cryptocurrency to Sell:", c_name)
-        
-        for coin in data:
-            if coin["name"] == crypto_choice:
-                current_price = coin["current_price"]
-                st.write(f"Current Price of {crypto_choice}: ₹{current_price}")
-                
-        
-        st.write(f"You own {c_quantity[c_name.index(crypto_choice)]} {crypto_choice} at a buying price of ₹{c_buyingprice[c_name.index(crypto_choice)]}.")  
-        
-        quantity = st.number_input("Enter quantity to sell:", min_value=1, step=1)
-        
-        if quantity <= 0:
-            st.warning("Please enter a valid quantity greater than zero!")
-            return
-        
-        # try:
-        total_cost = quantity * current_price
-        st.write(f"**Total Cost:** ₹{total_cost}")
-        
-        if quantity > c_quantity[c_name.index(crypto_choice)]:
-            st.warning("You don't own enough of this cryptocurrency to sell.")
-            return
-        
-        
-        if st.button("Confirm Sale"):
-            # Database transaction
-                cursor.execute("UPDATE user SET balance = balance + %s WHERE username = %s", (total_cost, username))
-                cursor.execute("UPDATE buycrypto SET quantity = quantity - %s WHERE username = %s", (quantity, username))
-                cursor.execute("INSERT INTO sellcrypto (username, cryptoname,sellingprice, buyingprice, quantity, gain/loss) VALUES (%s, %s, %s, %s, %s, %s)", (username, crypto_choice, current_price, c_buyingprice[c_name.index(crypto_choice)], quantity, total_cost - (quantity * c_buyingprice[c_name.index(crypto_choice)])))
-                conn.commit()
-                st.success(f"Successfully sold {quantity} {crypto_choice} for ₹{total_cost}!")
-                st.rerun()
-        # except Exception as e:
-        #     st.warning("Network Error! Try again later.")
-            
+        st.warning("⚠️ Cryptocurrency data unavailable.")
+        return
+
+    # Get all buy lots of the selected crypto
+    selected_crypto_lots = [row for row in owned_crypto if row[1] == selected_crypto]
+
+    # Let the user **choose which buy lot to sell from**
+    lot_options = [f"Lot ID: {row[0]} | {row[2]} {selected_crypto} @ ₹{row[3]}" for row in selected_crypto_lots]
+    selected_lot = st.selectbox("Select Buy Lot to Sell From:", lot_options)
+
+    # Extract selected lot details
+    selected_lot_id = int(selected_lot.split("|")[0].split(":")[1].strip())
+    selected_lot_quantity = decimal.Decimal(str([row[2] for row in selected_crypto_lots if row[0] == selected_lot_id][0]))
+    selected_lot_price = decimal.Decimal(str([row[3] for row in selected_crypto_lots if row[0] == selected_lot_id][0]))
+
+    st.write(f"📈 **Current Price:** ₹{current_price}")
+    st.write(f"📊 **You Own in Selected Lot:** {selected_lot_quantity} {selected_crypto} at ₹{selected_lot_price}")
+
+    # User enters quantity to sell
+    quantity_to_sell = st.number_input("Enter quantity to sell:", min_value=0.0001, max_value=float(selected_lot_quantity), step=0.0001, format="%.4f")
+
+    # Convert quantity to Decimal
+    quantity_to_sell = decimal.Decimal(str(quantity_to_sell))
+
+    # Calculate profit/loss
+    total_sell_amount = quantity_to_sell * current_price
+    profit_loss = (current_price - selected_lot_price) * quantity_to_sell
+
+    st.write(f"💰 **Total Sale Amount:** ₹{total_sell_amount}")
+    st.write(f"📈 **Profit/Loss:** ₹{profit_loss}")
+
+    # Confirm Sale Button
+    if st.button("Confirm Sale ✅"):
+        try:
+            # Update user balance
+            cursor.execute("UPDATE user SET balance = balance + %s WHERE username = %s", (total_sell_amount, username))
+
+            # Update or remove buy lot in the database
+            if quantity_to_sell == selected_lot_quantity:
+                cursor.execute("DELETE FROM buycrypto WHERE id = %s", (selected_lot_id,))
+            else:
+                cursor.execute("UPDATE buycrypto SET quantity = quantity - %s WHERE id = %s", (quantity_to_sell, selected_lot_id))
+
+            # Insert into sellcrypto history
+            cursor.execute("""
+                INSERT INTO sellcrypto (username, cryptoname, sellingprice, buyingprice, quantity, total_sell_amount, gain_loss, sell_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            """, (username, selected_crypto, current_price, selected_lot_price, quantity_to_sell, total_sell_amount, profit_loss))
+
+            conn.commit()
+
+            # Fetch updated balance
+            updated_balance = user.checkBalance()
+
+            st.success(f"✅ Successfully sold {quantity_to_sell} {selected_crypto} for ₹{total_sell_amount}!")
+            st.write(f"📈 **Profit/Loss:** ₹{profit_loss}")
+            st.write(f"💰 **Updated Balance:** ₹{updated_balance}")
+
+            # Reset fields and refresh page
+            st.session_state["quantity_to_sell"] = 0.0001
+            st.rerun()
+
+        except Exception as e:
+            st.warning(f"⚠️ Error: {e}")
+
+    if st.button("Back"):
+        switch_page("Dashboard")
+
+
+
+def view_sales_history():
+    st.title("📜 Sales History")
+
+    # Ensure user is logged in
+    if "username" not in st.session_state:
+        st.error("Please login first!")
+        if st.button("Go to Login"):
+            st.session_state["page"] = "Login"
+            st.rerun()
+        return
+
+    username = st.session_state.username
+
+    # Fetch sales history from database
+    cursor.execute("""
+        SELECT cryptoname, quantity, sellingprice, buyingprice, total_sell_amount, gain_loss, sell_date 
+        FROM sellcrypto 
+        WHERE username = %s 
+        ORDER BY sell_date DESC
+    """, (username,))
+    sales_data = cursor.fetchall()
+
+    # If no sales exist, show message
+    if not sales_data:
+        st.warning("📭 No sales history available.")
         if st.button("Back"):
             switch_page("Dashboard")
+        return
+
+    # Convert sales history to Pandas DataFrame
+    df = pd.DataFrame(sales_data, columns=[
+        "Cryptocurrency", "Quantity Sold", "Selling Price (INR)", "Buying Price (INR)", 
+        "Total Sell Amount (INR)", "Profit/Loss (INR)", "Sell Date"
+    ])
+
+    # **Fix: Ensure Profit/Loss is a numeric column**
+    df["Profit/Loss (INR)"] = df["Profit/Loss (INR)"].astype(float)
+
+    # Apply number formatting (without converting to string)
+    df["Selling Price (INR)"] = df["Selling Price (INR)"].apply(lambda x: f"₹{x:,.2f}")
+    df["Buying Price (INR)"] = df["Buying Price (INR)"].apply(lambda x: f"₹{x:,.2f}")
+    df["Total Sell Amount (INR)"] = df["Total Sell Amount (INR)"].apply(lambda x: f"₹{x:,.2f}")
+
+    # **Fix: Apply color formatting only to numeric column**
+    def highlight_profit_loss(val):
+        return "color: green" if val >= 0 else "color: red"
+
+    st.dataframe(df.style.applymap(highlight_profit_loss, subset=["Profit/Loss (INR)"]))
+
+    if st.button("Back to Dashboard"):
+        switch_page("Dashboard")
+
+
+
 
 def view_portfolio():
     pass
+
+
 
 # **Navigation Handling**
 if st.session_state.page == "Login":
@@ -423,3 +561,5 @@ elif st.session_state.page == "view_portfolio":
     view_portfolio()
 elif st.session_state.page == "add_balance":
     add_balance()
+elif st.session_state.page == "sell_history":
+    view_sales_history()
