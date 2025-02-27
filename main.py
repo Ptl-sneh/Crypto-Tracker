@@ -13,6 +13,7 @@ import decimal
 # login
 
 # Cache API responses to reduce API calls
+
 @st.cache_data(ttl=60)
 def get_cached_crypto_data():
     url = "https://api.coingecko.com/api/v3/coins/markets"
@@ -42,12 +43,16 @@ class User:
         self.pwd = pwd
         self.email = email
         self.phone = phone
+        
+    # checks user is exists or not
     
     def userExists(self):
         """Check if user exists in database"""
         cursor.execute("SELECT * FROM user WHERE username = %s", (self.un,))
         return cursor.fetchone() is not None
 
+    # sign up
+    
     def register(self):
         if self.userExists():
             return False  
@@ -55,31 +60,58 @@ class User:
         conn.commit()
         return True 
 
+    # login
+
     def login(self):
         """Authenticate user"""
         cursor.execute("SELECT * FROM user WHERE username = %s AND pwd = %s", (self.un, self.pwd))
         return cursor.fetchone() is not None 
     
-    def checkBalance(self):  # Fixed method to return actual balance
+    # Check Balance
+    
+    def checkBalance(self):
         cursor.execute("SELECT balance FROM user WHERE username = %s", (self.un,))
         result = cursor.fetchone()
         return result[0] if result else 0
+    
+    # Withdraw
+    
+    def withdraw(self, upi_id, amount):
+        """Withdraw amount using UPI ID."""
+        balance = self.checkBalance()
+        
+        if amount > balance:
+            return False, "Insufficient balance!"
+
+        try:
+            cursor.execute("UPDATE user SET balance = balance - %s WHERE username = %s", (amount, self.un))
+            
+            cursor.execute("INSERT INTO withdrawals (username, upi_id, amount) VALUES (%s, %s, %s)",(self.un, upi_id, amount))
+            
+            conn.commit()
+            return True, f"₹{amount} withdrawn successfully to {upi_id}!"
+        except Exception as e:
+            return False, f"Error: {e}"
 
 
 # CRYPTO MANAGER
-# get_crypto_data
-# get_historical_data
-
 
 class CryptoManager:
+    
+    # get crypto
+    
     def get_crypto_data(self):
         return get_cached_crypto_data()
+    
+    # get historical data for graph
     
     def get_historical_data(self, crypto_id):
         return get_cached_historical_data(crypto_id)
 
 if "page" not in st.session_state:
     st.session_state.page = "Login"
+    
+# Switch Page
 
 def switch_page(page):
     st.session_state.page = page
@@ -87,7 +119,6 @@ def switch_page(page):
 
 
 # Signup Page
-
 
 def signup_page():
     st.title("Signup Page")
@@ -139,6 +170,8 @@ def login_page():
 
 
 #  Dashboard Page
+
+# pages redirection
 
 
 def dashboard():
@@ -217,6 +250,8 @@ def view_crypto():
         switch_page("Dashboard")
 
 
+# buy crypto
+
 
 def buy_crypto():
     st.title("Buy Cryptocurrency")
@@ -233,6 +268,7 @@ def buy_crypto():
     user = User(username, "")
     balance = user.checkBalance()
 
+    # checks the balance
 
     if balance == 0:
         st.warning("Your balance is ₹0. Please add funds first!")
@@ -250,6 +286,8 @@ def buy_crypto():
     crypto_names = [coin["name"] for coin in data]
 
     # Reset session state variables if not set
+    # It is for refreshing the page
+    
     if "crypto_choice" not in st.session_state:
         st.session_state["crypto_choice"] = crypto_names[0]
 
@@ -257,6 +295,7 @@ def buy_crypto():
         st.session_state["investment_amount"] = 0.0
 
     # Select cryptocurrency
+    
     selected_crypto = st.selectbox("Select Cryptocurrency to Buy:", crypto_names, key="crypto_choice")
 
     if st.button("Refresh Prices 🔄"):
@@ -264,6 +303,9 @@ def buy_crypto():
 
     selected_coin = next((coin for coin in data if coin["name"] == selected_crypto), None)
 
+    
+    # Display selected cryptocurrency details
+    
     if selected_coin:
         st.write(f"**Name:** {selected_coin['name']}")
         st.write(f"**Symbol:** {selected_coin['symbol'].upper()}")
@@ -275,6 +317,7 @@ def buy_crypto():
         st.write(f"**All-time Low:** ₹{selected_coin['atl']}")
 
         # Function to plot price trend
+        
         def plot_price_trend(crypto_id):
             historical_data = manager.get_historical_data(crypto_id)
 
@@ -298,6 +341,7 @@ def buy_crypto():
         plot_price_trend(selected_coin["id"])
 
         # User enters investment amount
+        
         amount_invested = st.number_input("Enter Rupees to Invest:", min_value=0.01, step=0.01, format="%.2f", key="investment_amount")
         
         if amount_invested > balance:
@@ -307,6 +351,7 @@ def buy_crypto():
             return
 
         # Calculate how much crypto the user will receive
+        
         crypto_quantity = round(amount_invested / selected_coin["current_price"], 8)
         st.write(f"**You will own {selected_coin['name']}:** {crypto_quantity} units")
         st.write(f"💰 **Your Current Balance:** ₹{balance}")
@@ -314,14 +359,17 @@ def buy_crypto():
         if st.button("Confirm Purchase ✅"):
             try:
                 # Convert values to Decimal for precise calculations
+                
                 amount_decimal = decimal.Decimal(str(amount_invested))
                 crypto_quantity_decimal = decimal.Decimal(str(crypto_quantity))
                 price_decimal = decimal.Decimal(str(round(selected_coin["current_price"], 8)))
 
                 # Update user balance
+                
                 cursor.execute("UPDATE user SET balance = balance - %s WHERE username = %s", (amount_decimal, username))
                 
                 # Insert into buycrypto table
+                
                 cursor.execute("""
                     INSERT INTO buycrypto (username, cryptoname, quantity, buyingprice, amountpaid, buy_date)
                     VALUES (%s, %s, %s, %s, %s, NOW())
@@ -346,10 +394,11 @@ def buy_crypto():
         
 def add_balance():
     st.title("Add Balance")
-
+    
+    # Ensure user is logged in 
     
     username = st.session_state.username
-    user = User(username, "")  # Password not needed for balance check
+    user = User(username, "") 
     balance = user.checkBalance()
     
     
@@ -377,6 +426,7 @@ def sell_crypto():
     st.title("Sell Crypto")
 
     # Ensure user is logged in
+    
     if "username" not in st.session_state:
         st.error("Please login first!")
         if st.button("Go to Login"):
@@ -388,6 +438,7 @@ def sell_crypto():
     user = User(username, "")
 
     # Fetch user balance
+    
     balance = user.checkBalance()
     st.write(f"💰 **Your Current Balance:** ₹{balance}")
 
@@ -395,6 +446,7 @@ def sell_crypto():
     data = manager.get_crypto_data()
 
     # Fetch user's owned crypto
+    
     cursor.execute("SELECT id, cryptoname, quantity, buyingprice FROM buycrypto WHERE username = %s", (username,))
     owned_crypto = cursor.fetchall()
 
@@ -405,10 +457,12 @@ def sell_crypto():
         return
 
     # Select cryptocurrency to sell
-    crypto_names = list(set([row[1] for row in owned_crypto]))  # Unique crypto names
+    
+    crypto_names = list(set([row[1] for row in owned_crypto])) 
     selected_crypto = st.selectbox("Select Cryptocurrency to Sell:", crypto_names)
 
-    # Get current market price
+    # get current price of the selected crypto
+    
     for coin in data:
         if coin["name"] == selected_crypto:
             current_price = decimal.Decimal(str(coin["current_price"]))
@@ -417,14 +471,15 @@ def sell_crypto():
         st.warning("⚠️ Cryptocurrency data unavailable.")
         return
 
-    # Get all buy lots of the selected crypto
+    # Select buy lot to sell from
+    
     selected_crypto_lots = [row for row in owned_crypto if row[1] == selected_crypto]
 
-    # Let the user **choose which buy lot to sell from**
     lot_options = [f"Lot ID: {row[0]} | {row[2]} {selected_crypto} @ ₹{row[3]}" for row in selected_crypto_lots]
     selected_lot = st.selectbox("Select Buy Lot to Sell From:", lot_options)
 
     # Extract selected lot details
+    
     selected_lot_id = int(selected_lot.split("|")[0].split(":")[1].strip())
     selected_lot_quantity = decimal.Decimal(str([row[2] for row in selected_crypto_lots if row[0] == selected_lot_id][0]))
     selected_lot_price = decimal.Decimal(str([row[3] for row in selected_crypto_lots if row[0] == selected_lot_id][0]))
@@ -432,32 +487,33 @@ def sell_crypto():
     st.write(f"📈 **Current Price:** ₹{current_price}")
     st.write(f"📊 **You Own in Selected Lot:** {selected_lot_quantity} {selected_crypto} at ₹{selected_lot_price}")
 
-    # User enters quantity to sell
     quantity_to_sell = st.number_input("Enter quantity to sell:", min_value=0.0001, max_value=float(selected_lot_quantity), step=0.0001, format="%.4f")
 
     # Convert quantity to Decimal
+    
     quantity_to_sell = decimal.Decimal(str(quantity_to_sell))
 
     # Calculate profit/loss
+    
     total_sell_amount = quantity_to_sell * current_price
     profit_loss = (current_price - selected_lot_price) * quantity_to_sell
 
-    st.write(f"💰 **Total Sale Amount:** ₹{total_sell_amount}")
+    st.write(f"💰 **Total Sell Amount:** ₹{total_sell_amount}")
     st.write(f"📈 **Profit/Loss:** ₹{profit_loss}")
 
-    # Confirm Sale Button
-    if st.button("Confirm Sale ✅"):
+    if st.button("Sell"):
         try:
-            # Update user balance
             cursor.execute("UPDATE user SET balance = balance + %s WHERE username = %s", (total_sell_amount, username))
 
             # Update or remove buy lot in the database
+            
             if quantity_to_sell == selected_lot_quantity:
                 cursor.execute("DELETE FROM buycrypto WHERE id = %s", (selected_lot_id,))
             else:
                 cursor.execute("UPDATE buycrypto SET quantity = quantity - %s WHERE id = %s", (quantity_to_sell, selected_lot_id))
 
             # Insert into sellcrypto history
+            
             cursor.execute("""
                 INSERT INTO sellcrypto (username, cryptoname, sellingprice, buyingprice, quantity, total_sell_amount, gain_loss, sell_date)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
@@ -466,6 +522,7 @@ def sell_crypto():
             conn.commit()
 
             # Fetch updated balance
+            
             updated_balance = user.checkBalance()
 
             st.success(f"✅ Successfully sold {quantity_to_sell} {selected_crypto} for ₹{total_sell_amount}!")
@@ -473,6 +530,7 @@ def sell_crypto():
             st.write(f"💰 **Updated Balance:** ₹{updated_balance}")
 
             # Reset fields and refresh page
+            
             st.session_state["quantity_to_sell"] = 0.0001
             st.rerun()
 
@@ -488,6 +546,7 @@ def view_sells_history():
     st.title("📜 Sell History")
 
     # Ensure user is logged in
+    
     if "username" not in st.session_state:
         st.error("Please login first!")
         if st.button("Go to Login"):
@@ -498,6 +557,7 @@ def view_sells_history():
     username = st.session_state.username
 
     # Fetch sell history from database
+    
     cursor.execute("""
         SELECT cryptoname, quantity, sellingprice, buyingprice, total_sell_amount, gain_loss, sell_date 
         FROM sellcrypto 
@@ -507,6 +567,7 @@ def view_sells_history():
     sell_data = cursor.fetchall()
 
     # If no sell exist, show message
+    
     if not sell_data:
         st.warning("📭 No sell history available.")
         if st.button("Back"):
@@ -514,20 +575,24 @@ def view_sells_history():
         return
 
     # Convert sell history to Pandas DataFrame
+    
     df = pd.DataFrame(sell_data, columns=[
         "Cryptocurrency", "Quantity Sold", "Selling Price (INR)", "Buying Price (INR)", 
         "Total Sell Amount (INR)", "Profit/Loss (INR)", "Sell Date"
     ])
 
-    # **Fix: Ensure Profit/Loss is a numeric column**
+    # Convert INR columns to float
+
     df["Profit/Loss (INR)"] = df["Profit/Loss (INR)"].astype(float)
 
-    # Apply number formatting (without converting to string)
+
+
     df["Selling Price (INR)"] = df["Selling Price (INR)"].apply(lambda x: f"₹{x:,.2f}")
     df["Buying Price (INR)"] = df["Buying Price (INR)"].apply(lambda x: f"₹{x:,.2f}")
     df["Total Sell Amount (INR)"] = df["Total Sell Amount (INR)"].apply(lambda x: f"₹{x:,.2f}")
 
-    # **Fix: Apply color formatting only to numeric column**
+
+    
     def highlight_profit_loss(val):
         return "color: green" if val >= 0 else "color: red"
 
@@ -539,6 +604,7 @@ def view_sells_history():
 
 
 # Function to fetch owned cryptocurrencies
+
 def get_owned_cryptos(username):
     cursor.execute("""
         SELECT cryptoname, SUM(quantity), SUM(quantity * buyingprice) 
@@ -547,6 +613,7 @@ def get_owned_cryptos(username):
     return cursor.fetchall()
 
 # Function to fetch transaction history
+
 def get_transaction_history(username):
     cursor.execute("""
         SELECT cryptoname, quantity, buyingprice, 'BUY' AS type, buy_date FROM buycrypto WHERE username = %s
@@ -565,6 +632,7 @@ def view_portfolio():
     st.title("📊 Your Portfolio")
 
     # Ensure user is logged in
+    
     if "username" not in st.session_state:
         st.error("Please login first!")
         if st.button("Go to Login"):
@@ -576,6 +644,7 @@ def view_portfolio():
     manager = CryptoManager()
     
     # Fetch owned cryptocurrencies
+    
     owned_cryptos = get_owned_cryptos(username)
     if not owned_cryptos:
         st.warning("You don't own any cryptocurrencies yet.")
@@ -584,14 +653,16 @@ def view_portfolio():
         return
     
     # Get live prices
+    
     live_data = manager.get_crypto_data()
     price_map = {coin["name"]: decimal.Decimal(str(coin["current_price"])) for coin in live_data}
-    print(type(price_map))
     
     total_investment = 0
     total_value = 0
     portfolio_data = []
-
+    
+    # data for the table and portfolio value
+    
     for crypto, quantity, invested in owned_cryptos:
         current_price = price_map.get(crypto, decimal.Decimal("0"))
         current_value = quantity * current_price
@@ -609,24 +680,75 @@ def view_portfolio():
     st.metric("📈 Total Investment", f"₹{total_investment:,.2f}")
     st.metric("📊 Overall Profit/Loss", f"₹{(total_value - total_investment):,.2f}")
     
+    
     # Display Portfolio Table
+    
     df = pd.DataFrame(portfolio_data, columns=["Cryptocurrency", "Quantity", "Investment (₹)", "Current Value (₹)", "Profit/Loss (₹)", "Profit/Loss (%)"])
     st.dataframe(df.style.applymap(lambda x: "color: green" if x > 0 else "color: red", subset=["Profit/Loss (₹)", "Profit/Loss (%)"]))
     
     
-    # Fetch and display transaction history
+    # transaction history
+    
     st.subheader("📜 Transaction History")
     transactions = get_transaction_history(username)
     history_df = pd.DataFrame(transactions, columns=["Cryptocurrency", "Quantity", "Price (₹)", "Type", "Date"])
     st.dataframe(history_df)
     
-    # Back to Dashboard Button
+
     if st.button("Back to Dashboard"):
         st.session_state.page = "Dashboard"
         st.rerun()
+    elif st.button("withdraw"):
+        st.session_state.page = "withdraw_funds"
+        st.rerun()
+        
+        
+        
+# Withdraw Funds
+     
+def withdraw_funds():
+    st.title("Withdraw Funds 💸")
+
+    if "username" not in st.session_state:
+        st.error("Please login first!")
+        if st.button("Go to Login"):
+            st.session_state["page"] = "Login"
+            st.rerun()
+        return
+
+    username = st.session_state.username
+    user = User(username, "")
+
+    # Fetch current balance
+    
+    balance = user.checkBalance()
+    st.write(f"💰 **Current Balance:** ₹{balance}")
+
+    # User inputs withdrawal details
+    
+    upi_id = st.text_input("Enter UPI ID")
+    amount = st.number_input("Enter amount to withdraw (INR):", min_value=100.0, step=50.0)
+
+    if st.button("Withdraw"):
+        if not upi_id:
+            st.warning("Please enter a valid UPI ID!")
+        elif amount <= 0:
+            st.warning("Enter a valid withdrawal amount!")
+        else:
+            success, message = user.withdraw(upi_id, amount)
+            if success:
+                st.success(message)
+            else:
+                st.warning(message)
+
+    if st.button("Back to Portfolio"):
+        st.session_state.page = "view_portfolio"
+        st.rerun()
+
 
 
 # **Navigation Handling**
+
 if st.session_state.page == "Login":
     login_page()
 elif st.session_state.page == "Signup":
@@ -645,3 +767,5 @@ elif st.session_state.page == "add_balance":
     add_balance()
 elif st.session_state.page == "sell_history":
     view_sells_history()
+elif st.session_state.page == "withdraw_funds":
+    withdraw_funds()
