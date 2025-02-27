@@ -538,10 +538,84 @@ def view_sales_history():
 
 
 
+# Function to fetch owned cryptocurrencies
+def get_owned_cryptos(username):
+    cursor.execute("""
+        SELECT cryptoname, SUM(quantity), SUM(quantity * buyingprice) 
+        FROM buycrypto WHERE username = %s GROUP BY cryptoname
+    """, (username,))
+    return cursor.fetchall()
 
+# Function to fetch transaction history
+def get_transaction_history(username):
+    cursor.execute("""
+        SELECT cryptoname, quantity, buyingprice, 'BUY' AS type, buy_date FROM buycrypto WHERE username = %s
+        UNION
+        SELECT cryptoname, quantity, sellingprice, 'SELL' AS type, sell_date FROM sellcrypto WHERE username = %s
+        ORDER BY buy_date DESC
+    """, (username, username))
+    return cursor.fetchall()
+
+# Portfolio Page
 def view_portfolio():
-    pass
+    st.title("📊 Your Portfolio")
 
+    # Ensure user is logged in
+    if "username" not in st.session_state:
+        st.error("Please login first!")
+        if st.button("Go to Login"):
+            st.session_state.page = "Login"
+            st.rerun()
+        return
+    
+    username = st.session_state.username
+    manager = CryptoManager()
+    
+    # Fetch owned cryptocurrencies
+    owned_cryptos = get_owned_cryptos(username)
+    if not owned_cryptos:
+        st.warning("You don't own any cryptocurrencies yet.")
+        return
+    
+    # Get live prices
+    live_data = manager.get_crypto_data()
+    price_map = {coin["name"]: decimal.Decimal(str(coin["current_price"])) for coin in live_data}
+    
+    total_investment = 0
+    total_value = 0
+    portfolio_data = []
+
+    for crypto, quantity, invested in owned_cryptos:
+        current_price = price_map.get(crypto, decimal.Decimal("0"))
+        current_value = quantity * current_price
+        profit_loss = current_value - invested
+        profit_loss_pct = (profit_loss / invested * 100) if invested > 0 else 0
+        
+        total_investment += invested
+        total_value += current_value
+        
+        portfolio_data.append([crypto, quantity, invested, current_value, profit_loss, profit_loss_pct])
+    
+    # Display Total Portfolio Value
+    st.metric("💰 Total Portfolio Value", f"₹{total_value:,.2f}")
+    st.metric("📈 Total Investment", f"₹{total_investment:,.2f}")
+    st.metric("📊 Overall Profit/Loss", f"₹{(total_value - total_investment):,.2f}")
+    
+    # Display Portfolio Table
+    df = pd.DataFrame(portfolio_data, columns=["Cryptocurrency", "Quantity", "Investment (₹)", "Current Value (₹)", "Profit/Loss (₹)", "Profit/Loss (%)"])
+    st.dataframe(df.style.applymap(lambda x: "color: green" if x > 0 else "color: red", subset=["Profit/Loss (₹)", "Profit/Loss (%)"]))
+    
+    
+    # Fetch and display transaction history
+    st.subheader("📜 Transaction History")
+    transactions = get_transaction_history(username)
+    history_df = pd.DataFrame(transactions, columns=["Cryptocurrency", "Quantity", "Price (₹)", "Type", "Date"])
+    st.dataframe(history_df)
+    
+    # Back to Dashboard Button
+    if st.button("Back to Dashboard"):
+        st.session_state.page = "Dashboard"
+        st.rerun()
 
 
 # **Navigation Handling**

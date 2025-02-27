@@ -5,6 +5,6 @@ conn = mysql.connector.connect(host = "localhost",user="root",password="",databa
 cursor = conn.cursor()
 
 if conn.is_connected():
-    print("Caonnected")
+    print("Connected")
 else:
     print("not connected")    
