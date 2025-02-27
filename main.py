@@ -625,6 +625,7 @@ def get_transaction_history(username):
 
 
 
+
 # Portfolio Page
 
 
