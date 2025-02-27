@@ -484,8 +484,8 @@ def sell_crypto():
 
 
 
-def view_sales_history():
-    st.title("📜 Sales History")
+def view_sells_history():
+    st.title("📜 Sell History")
 
     # Ensure user is logged in
     if "username" not in st.session_state:
@@ -497,24 +497,24 @@ def view_sales_history():
 
     username = st.session_state.username
 
-    # Fetch sales history from database
+    # Fetch sell history from database
     cursor.execute("""
         SELECT cryptoname, quantity, sellingprice, buyingprice, total_sell_amount, gain_loss, sell_date 
         FROM sellcrypto 
         WHERE username = %s 
         ORDER BY sell_date DESC
     """, (username,))
-    sales_data = cursor.fetchall()
+    sell_data = cursor.fetchall()
 
-    # If no sales exist, show message
-    if not sales_data:
-        st.warning("📭 No sales history available.")
+    # If no sell exist, show message
+    if not sell_data:
+        st.warning("📭 No sell history available.")
         if st.button("Back"):
             switch_page("Dashboard")
         return
 
-    # Convert sales history to Pandas DataFrame
-    df = pd.DataFrame(sales_data, columns=[
+    # Convert sell history to Pandas DataFrame
+    df = pd.DataFrame(sell_data, columns=[
         "Cryptocurrency", "Quantity Sold", "Selling Price (INR)", "Buying Price (INR)", 
         "Total Sell Amount (INR)", "Profit/Loss (INR)", "Sell Date"
     ])
@@ -556,7 +556,11 @@ def get_transaction_history(username):
     """, (username, username))
     return cursor.fetchall()
 
+
+
 # Portfolio Page
+
+
 def view_portfolio():
     st.title("📊 Your Portfolio")
 
@@ -575,11 +579,14 @@ def view_portfolio():
     owned_cryptos = get_owned_cryptos(username)
     if not owned_cryptos:
         st.warning("You don't own any cryptocurrencies yet.")
+        if st.button("Back"):
+            switch_page("Dashboard")
         return
     
     # Get live prices
     live_data = manager.get_crypto_data()
     price_map = {coin["name"]: decimal.Decimal(str(coin["current_price"])) for coin in live_data}
+    print(type(price_map))
     
     total_investment = 0
     total_value = 0
@@ -597,6 +604,7 @@ def view_portfolio():
         portfolio_data.append([crypto, quantity, invested, current_value, profit_loss, profit_loss_pct])
     
     # Display Total Portfolio Value
+    
     st.metric("💰 Total Portfolio Value", f"₹{total_value:,.2f}")
     st.metric("📈 Total Investment", f"₹{total_investment:,.2f}")
     st.metric("📊 Overall Profit/Loss", f"₹{(total_value - total_investment):,.2f}")
@@ -636,4 +644,4 @@ elif st.session_state.page == "view_portfolio":
 elif st.session_state.page == "add_balance":
     add_balance()
 elif st.session_state.page == "sell_history":
-    view_sales_history()
+    view_sells_history()
