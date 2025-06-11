@@ -24,3 +24,6 @@ A full-featured cryptocurrency trading platform built with Python and Streamlit 
 1. Install dependencies:
    ```bash
    pip install streamlit mysql-connector-python requests matplotlib pandas
+
+   streamlit run main.py
+
